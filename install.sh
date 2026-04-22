@@ -59,6 +59,19 @@ install_hf() {
     success "hf installed: $(hf version 2>/dev/null | head -1)"
 }
 
+# ─── nvitop ───────────────────────────────────────────────────────────────────
+install_nvitop() {
+    if command -v nvitop &>/dev/null; then
+        success "nvitop already installed"
+        return
+    fi
+
+    info "Installing nvitop via uv tool..."
+    uv tool install nvitop
+
+    success "nvitop installed"
+}
+
 # ─── Shell config ─────────────────────────────────────────────────────────────
 configure_shell() {
     local rc_file=""
@@ -101,6 +114,7 @@ main() {
     install_uv
     install_huggingface
     install_hf
+    install_nvitop
     configure_shell
 
     echo ""
