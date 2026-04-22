@@ -31,7 +31,7 @@ install_uv() {
     success "uv installed: $(uv --version)"
 }
 
-# ─── Hugging Face CLI ─────────────────────────────────────────────────────────
+# ─── Hugging Face CLI (huggingface-cli) ───────────────────────────────────────
 install_huggingface() {
     if command -v huggingface-cli &>/dev/null; then
         success "huggingface-cli already installed: $(huggingface-cli version)"
@@ -42,6 +42,21 @@ install_huggingface() {
     uv tool install "huggingface_hub[cli]"
 
     success "huggingface-cli installed: $(huggingface-cli version)"
+}
+
+# ─── hf CLI (with bucket/sync support) ────────────────────────────────────────
+install_hf() {
+    if command -v hf &>/dev/null; then
+        success "hf already installed: $(hf version 2>/dev/null | head -1)"
+        return
+    fi
+
+    info "Installing hf CLI..."
+    curl -LsSf https://hf.co/cli/install.sh | bash -s
+
+    export PATH="$HOME/.local/bin:$PATH"
+
+    success "hf installed: $(hf version 2>/dev/null | head -1)"
 }
 
 # ─── Shell config ─────────────────────────────────────────────────────────────
@@ -85,6 +100,7 @@ main() {
 
     install_uv
     install_huggingface
+    install_hf
     configure_shell
 
     echo ""
@@ -92,7 +108,7 @@ main() {
     success "Bootstrap complete!"
     echo ""
     echo "  Next steps:"
-    echo "    huggingface-cli login   # đăng nhập HF account"
+    echo "    hf auth login           # đăng nhập HF account"
     echo "    uv --version            # kiểm tra uv"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
