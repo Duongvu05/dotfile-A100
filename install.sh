@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+
+# Detect nếu đang được source hay execute
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    _SOURCED=false
+    set -euo pipefail
+else
+    _SOURCED=true
+fi
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -159,6 +166,13 @@ main() {
     echo "    hf auth login           # đăng nhập HF account"
     echo "    ssh -T git@github.com   # kiểm tra GitHub SSH"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if [[ "$_SOURCED" == false ]]; then
+        echo ""
+        echo -e "${YELLOW}  ⚠ Chạy lệnh sau để dùng ngay không cần mở terminal mới:${NC}"
+        echo "    source ~/.bashrc"
+        echo ""
+    fi
 }
 
 main "$@"
