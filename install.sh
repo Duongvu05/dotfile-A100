@@ -100,9 +100,11 @@ fi
 # <<< dotfile-A100 managed <<<
 SHELLBLOCK
 
-    # Source ngay trong session hiện tại
+    # Source ngay trong session hiện tại (tắt -u tạm vì .bashrc dùng $PS1)
+    set +u
     # shellcheck source=/dev/null
-    source "$rc_file"
+    source "$rc_file" 2>/dev/null || true
+    set -u
     success "Shell config updated và đã source $rc_file"
 }
 
