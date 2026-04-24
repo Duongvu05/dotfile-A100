@@ -100,7 +100,38 @@ fi
 # <<< dotfile-A100 managed <<<
 SHELLBLOCK
 
-    success "Shell config updated — run: source $rc_file"
+    # Source ngay trong session hiện tại
+    # shellcheck source=/dev/null
+    source "$rc_file"
+    success "Shell config updated và đã source $rc_file"
+}
+
+# ─── GitHub SSH key ────────────────────────────────────────────────────────────
+setup_github_ssh() {
+    local key="$HOME/.ssh/id_ed25519"
+
+    if [[ -f "$key" ]]; then
+        success "SSH key đã tồn tại: $key"
+    else
+        info "Generating SSH key (ed25519)..."
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
+        ssh-keygen -t ed25519 -C "github-$(hostname)" -f "$key" -N ""
+        success "SSH key đã tạo: $key"
+    fi
+
+    # Thêm vào ssh-agent
+    eval "$(ssh-agent -s)" &>/dev/null
+    ssh-add "$key" 2>/dev/null || true
+
+    echo ""
+    echo "  ┌─ Public key (thêm vào GitHub > Settings > SSH keys) ─────────────"
+    echo "  │"
+    sed 's/^/  │  /' "$key.pub"
+    echo "  │"
+    echo "  └───────────────────────────────────────────────────────────────────"
+    echo "  https://github.com/settings/ssh/new"
+    echo ""
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -116,6 +147,7 @@ main() {
     install_hf
     install_nvitop
     configure_shell
+    setup_github_ssh
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -123,7 +155,7 @@ main() {
     echo ""
     echo "  Next steps:"
     echo "    hf auth login           # đăng nhập HF account"
-    echo "    uv --version            # kiểm tra uv"
+    echo "    ssh -T git@github.com   # kiểm tra GitHub SSH"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
