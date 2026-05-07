@@ -79,6 +79,61 @@ install_nvitop() {
     success "nvitop installed"
 }
 
+# ─── PM2 ──────────────────────────────────────────────────────────────────────
+install_pm2() {
+    if command -v pm2 &>/dev/null; then
+        success "pm2 already installed: $(pm2 --version)"
+        return
+    fi
+
+    # If npm is already available, use it directly
+    if command -v npm &>/dev/null; then
+        info "Installing pm2 via npm..."
+        npm install -g pm2
+        success "pm2 installed: $(pm2 --version)"
+        return
+    fi
+
+    # No npm — install Node.js via NVM first
+    info "Node.js not found. Installing NVM + Node.js LTS..."
+    local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+
+    if [[ ! -f "$nvm_dir/nvm.sh" ]]; then
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    fi
+
+    # shellcheck source=/dev/null
+    set +u
+    source "$nvm_dir/nvm.sh"
+    set -u
+
+    nvm install --lts
+    nvm use --lts
+
+    info "Installing pm2 via npm..."
+    npm install -g pm2
+
+    # Persist NVM init in shell config if not already there
+    local rc_file=""
+    case "${SHELL:-}" in
+        */zsh)  rc_file="$HOME/.zshrc" ;;
+        */bash) rc_file="$HOME/.bashrc" ;;
+    esac
+
+    local nvm_marker="# >>> nvm managed >>>"
+    if [[ -n "$rc_file" ]] && ! grep -qF "$nvm_marker" "$rc_file" 2>/dev/null; then
+        cat >> "$rc_file" <<NVMBLOCK
+
+$nvm_marker
+export NVM_DIR="\$HOME/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && source "\$NVM_DIR/nvm.sh"
+# <<< nvm managed <<<
+NVMBLOCK
+    fi
+
+    success "pm2 installed: $(pm2 --version)"
+}
+
 # ─── Shell config ─────────────────────────────────────────────────────────────
 configure_shell() {
     local rc_file=""
@@ -155,6 +210,7 @@ main() {
     install_huggingface
     install_hf
     install_nvitop
+    install_pm2
     configure_shell
     setup_github_ssh
 
@@ -165,6 +221,7 @@ main() {
     echo "  Next steps:"
     echo "    hf auth login           # đăng nhập HF account"
     echo "    ssh -T git@github.com   # kiểm tra GitHub SSH"
+    echo "    pm2 ls                  # xem trạng thái jobs"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     if [[ "$_SOURCED" == false ]]; then
