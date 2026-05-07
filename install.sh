@@ -102,16 +102,26 @@ install_pm2() {
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
     fi
 
-    # shellcheck source=/dev/null
+    # nvm scripts use unbound variables internally — disable -u for the whole block
     set +u
+    # shellcheck source=/dev/null
     source "$nvm_dir/nvm.sh"
-    set -u
-
     nvm install --lts
     nvm use --lts
+    set -u
+
+    # Add the active node's bin to PATH so npm/pm2 are visible immediately
+    local node_bin
+    node_bin="$(set +u; source "$nvm_dir/nvm.sh" 2>/dev/null; nvm which current 2>/dev/null | xargs dirname)" || true
+    [[ -n "$node_bin" ]] && export PATH="$node_bin:$PATH"
 
     info "Installing pm2 via npm..."
     npm install -g pm2
+
+    # Ensure npm global bin is also in PATH
+    local npm_global_bin
+    npm_global_bin="$(npm root -g 2>/dev/null | sed 's|/node_modules$|/bin|')" || true
+    [[ -n "$npm_global_bin" ]] && export PATH="$npm_global_bin:$PATH"
 
     # Persist NVM init in shell config if not already there
     local rc_file=""
