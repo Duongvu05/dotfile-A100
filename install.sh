@@ -60,9 +60,25 @@ install_hf() {
     fi
 
     info "Installing hf CLI..."
-    curl -LsSf https://hf.co/cli/install.sh | bash -s
+    curl -LsSf https://hf.co/cli/install.sh | bash -s || true
 
     export PATH="$HOME/.local/bin:$PATH"
+
+    # The hf-cli venv may leak sys.path to /opt/venv which has a different huggingface_hub.
+    # Patch the hf binary to exclude /opt/venv from sys.path so it uses its own packages.
+    local hf_venv="$HOME/.hf-cli/venv"
+    local hf_bin="$HOME/.local/bin/hf"
+    if [[ -f "$hf_venv/bin/python3" ]] && ! hf sync --help &>/dev/null 2>&1; then
+        info "Patching hf binary to fix sys.path leak..."
+        cat > "$hf_bin" << HFEOF
+#!${hf_venv}/bin/python3
+import sys
+sys.path = [p for p in sys.path if '/opt/venv' not in p]
+from huggingface_hub.cli.hf import main
+main()
+HFEOF
+        chmod +x "$hf_bin"
+    fi
 
     success "hf installed: $(hf version 2>/dev/null | head -1)"
 }
