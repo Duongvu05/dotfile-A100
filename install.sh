@@ -83,6 +83,31 @@ HFEOF
     success "hf installed: $(hf version 2>/dev/null | head -1)"
 }
 
+# ─── hf-xet (Xet storage extension for HuggingFace) ─────────────────────────
+install_hf_xet() {
+    local targets=()
+
+    # Collect Python envs that have huggingface_hub but not hf_xet
+    for python in /opt/venv/bin/python3 "$HOME/.hf-cli/venv/bin/python3"; do
+        [[ -x "$python" ]] || continue
+        "$python" -c "import huggingface_hub" 2>/dev/null || continue
+        if ! "$python" -c "import hf_xet" 2>/dev/null; then
+            targets+=("$python")
+        fi
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        success "hf_xet already installed in all relevant envs"
+        return
+    fi
+
+    for python in "${targets[@]}"; do
+        info "Installing hf_xet into $(dirname "$python")..."
+        "$python" -m pip install -q hf_xet
+    done
+    success "hf_xet installed"
+}
+
 # ─── nvitop ───────────────────────────────────────────────────────────────────
 install_nvitop() {
     if command -v nvitop &>/dev/null; then
@@ -236,6 +261,7 @@ main() {
     install_uv
     install_huggingface
     install_hf
+    install_hf_xet
     install_nvitop
     install_pm2
     configure_shell
