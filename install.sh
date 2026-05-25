@@ -53,7 +53,8 @@ install_huggingface() {
 
 # ─── hf CLI (with bucket/sync support) ────────────────────────────────────────
 install_hf() {
-    if command -v hf &>/dev/null; then
+    # Verify hf is the official binary (supports sync), not the broken Python wrapper
+    if command -v hf &>/dev/null && hf sync --help &>/dev/null 2>&1; then
         success "hf already installed: $(hf version 2>/dev/null | head -1)"
         return
     fi
