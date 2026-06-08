@@ -30,14 +30,22 @@ export UV_TOOL_BIN_DIR="$DATA/.local/bin"
 # INSTALL SECTION — idempotent, skip nếu đã có trong /home/data/
 # =============================================================================
 
-install_ssh() {
-    if command -v sshd &>/dev/null; then
-        success "openssh-server already installed"
+install_sys_deps() {
+    local pkgs=()
+    command -v sshd     &>/dev/null || pkgs+=(openssh-server)
+    ldconfig -p 2>/dev/null | grep -q libGL   || pkgs+=(libgl1)
+    ldconfig -p 2>/dev/null | grep -q libglib || pkgs+=(libglib2.0-0)
+    if [[ ${#pkgs[@]} -eq 0 ]]; then
+        success "System deps already installed"
         return
     fi
-    info "Installing openssh-server..."
-    apt-get install -y openssh-server -q 2>/dev/null
-    success "openssh-server installed"
+    info "Installing system deps: ${pkgs[*]} ..."
+    apt-get install -y "${pkgs[@]}" -q 2>/dev/null
+    success "System deps installed"
+}
+
+install_ssh() {
+    install_sys_deps
 }
 
 install_uv() {
