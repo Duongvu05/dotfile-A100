@@ -1,8 +1,14 @@
-.PHONY: install help
+.PHONY: install startup help
 
 help:
 	@echo "Usage:"
-	@echo "  make install   Run bootstrap (cài uv + huggingface-cli)"
+	@echo "  make install    First-time bootstrap (installs all tools)"
+	@echo "  make startup    Run on every pod restart"
+	@echo "  bash setup.sh install"
+	@echo "  bash setup.sh"
 
 install:
-	@bash install.sh
+	@bash setup.sh install
+
+startup:
+	@bash setup.sh
