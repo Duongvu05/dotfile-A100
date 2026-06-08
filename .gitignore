@@ -1,0 +1,3 @@
+.tailscale_authkey
+.ssh_authorized_keys
+.env

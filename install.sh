@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# install.sh — bootstrap (lần đầu) + startup (mỗi lần restart)
+# Tất cả tools cài vào /home/data/ để persist qua pod restart.
+# Lần sau chỉ cần: bash /home/data/install.sh
 
-# Detect nếu đang được source hay execute
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     _SOURCED=false
     set -euo pipefail
@@ -8,67 +10,57 @@ else
     _SOURCED=true
 fi
 
-# ─── Colors ───────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 
-# ─── uv ───────────────────────────────────────────────────────────────────────
-install_uv() {
-    if command -v uv &>/dev/null; then
-        success "uv already installed: $(uv --version)"
+DATA=/home/data
+mkdir -p "$DATA"
+
+# ── Persistent paths ──────────────────────────────────────────────────────
+export PATH="$DATA/.local/bin:$DATA/.npm-global/bin:$PATH"
+export NVM_DIR="$DATA/.nvm"
+export NPM_CONFIG_PREFIX="$DATA/.npm-global"
+export UV_INSTALL_DIR="$DATA/.local/bin"
+export UV_TOOL_DIR="$DATA/.uv/tools"
+export UV_TOOL_BIN_DIR="$DATA/.local/bin"
+
+# =============================================================================
+# INSTALL SECTION — idempotent, skip nếu đã có trong /home/data/
+# =============================================================================
+
+install_ssh() {
+    if command -v sshd &>/dev/null; then
+        success "openssh-server already installed"
         return
     fi
+    info "Installing openssh-server..."
+    apt-get install -y openssh-server -q 2>/dev/null
+    success "openssh-server installed"
+}
 
-    info "Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # Source the env so uv is available in this session
-    if [[ -f "$HOME/.local/bin/env" ]]; then
-        # shellcheck source=/dev/null
-        source "$HOME/.local/bin/env"
+install_uv() {
+    if [[ -x "$DATA/.local/bin/uv" ]]; then
+        success "uv already installed: $($DATA/.local/bin/uv --version)"
+        return
     fi
-    export PATH="$HOME/.local/bin:$PATH"
-
+    info "Installing uv → $DATA/.local/bin ..."
+    curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$DATA/.local/bin" sh
     success "uv installed: $(uv --version)"
 }
 
-# ─── Hugging Face CLI (huggingface-cli) ───────────────────────────────────────
 install_huggingface() {
-    if command -v huggingface-cli &>/dev/null; then
-        success "huggingface-cli already installed: $(huggingface-cli version)"
+    if [[ -x "$DATA/.local/bin/hf" ]]; then
+        success "hf already installed"
         return
     fi
-
-    info "Installing huggingface-cli via uv tool..."
+    info "Installing huggingface-cli & hf via uv tool..."
     uv tool install "huggingface_hub[cli]"
-
-    success "huggingface-cli installed: $(huggingface-cli version)"
-}
-
-# ─── hf CLI (with bucket/sync support) ────────────────────────────────────────
-install_hf() {
-    # Verify hf is the official binary (supports sync), not the broken Python wrapper
-    if command -v hf &>/dev/null && hf sync --help &>/dev/null 2>&1; then
-        success "hf already installed: $(hf version 2>/dev/null | head -1)"
-        return
-    fi
-
-    info "Installing hf CLI..."
     curl -LsSf https://hf.co/cli/install.sh | bash -s || true
-
-    export PATH="$HOME/.local/bin:$PATH"
-
-    # The hf-cli venv may leak sys.path to /opt/venv which has a different huggingface_hub.
-    # Patch the hf binary to exclude /opt/venv from sys.path so it uses its own packages.
     local hf_venv="$HOME/.hf-cli/venv"
-    local hf_bin="$HOME/.local/bin/hf"
-    if [[ -f "$hf_venv/bin/python3" ]] && ! hf sync --help &>/dev/null 2>&1; then
+    local hf_bin="$DATA/.local/bin/hf"
+    if [[ -f "$hf_venv/bin/python3" ]] && ! "$hf_bin" sync --help &>/dev/null 2>&1; then
         info "Patching hf binary to fix sys.path leak..."
         cat > "$hf_bin" << HFEOF
 #!${hf_venv}/bin/python3
@@ -79,169 +71,78 @@ main()
 HFEOF
         chmod +x "$hf_bin"
     fi
-
-    success "hf installed: $(hf version 2>/dev/null | head -1)"
+    success "hf installed"
 }
 
-# ─── hf-xet (Xet storage extension for HuggingFace) ─────────────────────────
 install_hf_xet() {
     local targets=()
-
-    # Collect Python envs that have huggingface_hub but not hf_xet
     for python in /opt/venv/bin/python3 "$HOME/.hf-cli/venv/bin/python3"; do
         [[ -x "$python" ]] || continue
         "$python" -c "import huggingface_hub" 2>/dev/null || continue
-        if ! "$python" -c "import hf_xet" 2>/dev/null; then
-            targets+=("$python")
-        fi
+        "$python" -c "import hf_xet" 2>/dev/null || targets+=("$python")
     done
-
-    if [[ ${#targets[@]} -eq 0 ]]; then
-        success "hf_xet already installed in all relevant envs"
-        return
-    fi
-
+    [[ ${#targets[@]} -eq 0 ]] && { success "hf_xet already installed"; return; }
     for python in "${targets[@]}"; do
-        info "Installing hf_xet into $(dirname "$python")..."
         "$python" -m pip install -q hf_xet
     done
     success "hf_xet installed"
 }
 
-# ─── nvitop ───────────────────────────────────────────────────────────────────
 install_nvitop() {
-    if command -v nvitop &>/dev/null; then
+    if [[ -x "$DATA/.local/bin/nvitop" ]]; then
         success "nvitop already installed"
         return
     fi
-
-    info "Installing nvitop via uv tool..."
+    info "Installing nvitop → $DATA/.local/bin ..."
     uv tool install nvitop
-
     success "nvitop installed"
 }
 
-# ─── PM2 ──────────────────────────────────────────────────────────────────────
 install_pm2() {
-    if command -v pm2 &>/dev/null; then
-        success "pm2 already installed: $(pm2 --version)"
+    if [[ -x "$DATA/.npm-global/bin/pm2" ]]; then
+        success "pm2 already installed: $($DATA/.npm-global/bin/pm2 --version)"
+        [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
         return
     fi
-
-    # If npm is already available, use it directly
-    if command -v npm &>/dev/null; then
-        info "Installing pm2 via npm..."
-        npm install -g pm2
-        success "pm2 installed: $(pm2 --version)"
-        return
+    info "Installing NVM → $NVM_DIR ..."
+    if [[ ! -f "$NVM_DIR/nvm.sh" ]]; then
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | \
+            NVM_DIR="$NVM_DIR" bash
     fi
-
-    # No npm — install Node.js via NVM first
-    info "Node.js not found. Installing NVM + Node.js LTS..."
-    local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
-
-    if [[ ! -f "$nvm_dir/nvm.sh" ]]; then
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-    fi
-
-    # nvm scripts use unbound variables internally — disable -u for the whole block
     set +u
-    # shellcheck source=/dev/null
-    source "$nvm_dir/nvm.sh"
+    source "$NVM_DIR/nvm.sh"
     nvm install --lts
     nvm use --lts
+    node --version > "$DATA/.node_version"
     set -u
-
-    # Add the active node's bin to PATH so npm/pm2 are visible immediately
-    local node_bin
-    node_bin="$(set +u; source "$nvm_dir/nvm.sh" 2>/dev/null; nvm which current 2>/dev/null | xargs dirname)" || true
-    [[ -n "$node_bin" ]] && export PATH="$node_bin:$PATH"
-
-    info "Installing pm2 via npm..."
+    info "Installing pm2 → $DATA/.npm-global/bin ..."
     npm install -g pm2
-
-    # Ensure npm global bin is also in PATH
-    local npm_global_bin
-    npm_global_bin="$(npm root -g 2>/dev/null | sed 's|/node_modules$|/bin|')" || true
-    [[ -n "$npm_global_bin" ]] && export PATH="$npm_global_bin:$PATH"
-
-    # Persist NVM init in shell config if not already there
-    local rc_file=""
-    case "${SHELL:-}" in
-        */zsh)  rc_file="$HOME/.zshrc" ;;
-        */bash) rc_file="$HOME/.bashrc" ;;
-    esac
-
-    local nvm_marker="# >>> nvm managed >>>"
-    if [[ -n "$rc_file" ]] && ! grep -qF "$nvm_marker" "$rc_file" 2>/dev/null; then
-        cat >> "$rc_file" <<NVMBLOCK
-
-$nvm_marker
-export NVM_DIR="\$HOME/.nvm"
-[ -s "\$NVM_DIR/nvm.sh" ] && source "\$NVM_DIR/nvm.sh"
-# <<< nvm managed <<<
-NVMBLOCK
-    fi
-
     success "pm2 installed: $(pm2 --version)"
 }
 
-# ─── Shell config ─────────────────────────────────────────────────────────────
-configure_shell() {
-    local rc_file=""
-    case "${SHELL:-$(basename "$SHELL")}" in
-        */zsh)  rc_file="$HOME/.zshrc" ;;
-        */bash) rc_file="$HOME/.bashrc" ;;
-        *)      warn "Unknown shell — skipping shell config"; return ;;
-    esac
-
-    local marker="# >>> dotfile-A100 managed >>>"
-    if grep -qF "$marker" "$rc_file" 2>/dev/null; then
-        success "Shell config already patched in $rc_file"
-        return
-    fi
-
-    info "Patching $rc_file..."
-    cat >> "$rc_file" <<'SHELLBLOCK'
-
-# >>> dotfile-A100 managed >>>
-export PATH="$HOME/.local/bin:$PATH"
-
-# uv shell completions
-if command -v uv &>/dev/null; then
-    eval "$(uv generate-shell-completion "${SHELL##*/}" 2>/dev/null)" || true
-fi
-# <<< dotfile-A100 managed <<<
-SHELLBLOCK
-
-    # Source ngay trong session hiện tại (tắt -u tạm vì .bashrc dùng $PS1)
-    set +u
-    # shellcheck source=/dev/null
-    source "$rc_file" 2>/dev/null || true
-    set -u
-    success "Shell config updated và đã source $rc_file"
-}
-
-# ─── GitHub SSH key ────────────────────────────────────────────────────────────
 setup_github_ssh() {
-    local key="$HOME/.ssh/id_ed25519"
-
-    if [[ -f "$key" ]]; then
-        success "SSH key đã tồn tại: $key"
-    else
-        info "Generating SSH key (ed25519)..."
-        mkdir -p "$HOME/.ssh"
-        chmod 700 "$HOME/.ssh"
-        ssh-keygen -t ed25519 -C "github-$(hostname)" -f "$key" -N ""
-        success "SSH key đã tạo: $key"
+    local data_ssh="$DATA/.ssh"
+    mkdir -p "$data_ssh" && chmod 700 "$data_ssh"
+    if [[ ! -L /root/.ssh ]]; then
+        cp -r /root/.ssh/. "$data_ssh/" 2>/dev/null || true
+        rm -rf /root/.ssh
+        ln -sf "$data_ssh" /root/.ssh
+        success "~/.ssh symlinked → $data_ssh"
     fi
-
-    # Thêm vào ssh-agent
+    local key="$data_ssh/id_ed25519"
+    if [[ ! -f "$key" ]]; then
+        info "Generating SSH key (ed25519)..."
+        ssh-keygen -t ed25519 -C "github-$(hostname)" -f "$key" -N ""
+        success "SSH key created: $key"
+    else
+        success "SSH key exists: $key"
+    fi
+    [[ -f "$data_ssh/authorized_keys" ]] && \
+        cp "$data_ssh/authorized_keys" "$DATA/.ssh_authorized_keys" 2>/dev/null || true
     eval "$(ssh-agent -s)" &>/dev/null
     ssh-add "$key" 2>/dev/null || true
-
     echo ""
-    echo "  ┌─ Public key (thêm vào GitHub > Settings > SSH keys) ─────────────"
+    echo "  ┌─ Public key (add to GitHub > Settings > SSH keys) ───────────────"
     echo "  │"
     sed 's/^/  │  /' "$key.pub"
     echo "  │"
@@ -250,38 +151,137 @@ setup_github_ssh() {
     echo ""
 }
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+configure_shell() {
+    local rc_file="$HOME/.bashrc"
+    local marker="# >>> dotfile-A100 managed >>>"
+    if grep -qF "$marker" "$rc_file" 2>/dev/null; then
+        success "Shell config already patched"
+        return
+    fi
+    info "Patching $rc_file..."
+    cat >> "$rc_file" << 'SHELLBLOCK'
+
+# >>> dotfile-A100 managed >>>
+export DATA=/home/data
+export PATH="$DATA/.local/bin:$DATA/.npm-global/bin:$PATH"
+export NVM_DIR="$DATA/.nvm"
+export UV_TOOL_DIR="$DATA/.uv/tools"
+export UV_TOOL_BIN_DIR="$DATA/.local/bin"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
+if command -v uv &>/dev/null; then
+    eval "$(uv generate-shell-completion bash 2>/dev/null)" || true
+fi
+# <<< dotfile-A100 managed <<<
+SHELLBLOCK
+    set +u; source "$rc_file" 2>/dev/null || true; set -u
+    success "Shell config updated"
+}
+
+# =============================================================================
+# STARTUP SECTION — chạy mỗi lần restart (~5 giây)
+# =============================================================================
+
+startup_ssh() {
+    mkdir -p /run/sshd
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    # Restore authorized_keys
+    if [[ -f "$DATA/.ssh_authorized_keys" ]]; then
+        cp "$DATA/.ssh_authorized_keys" /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+    fi
+    # Restore SSH keys nếu /root/.ssh chưa phải symlink
+    if [[ ! -L /root/.ssh ]] && [[ -d "$DATA/.ssh" ]]; then
+        cp "$DATA/.ssh/id_ed25519"     /root/.ssh/id_ed25519     2>/dev/null || true
+        cp "$DATA/.ssh/id_ed25519.pub" /root/.ssh/id_ed25519.pub 2>/dev/null || true
+        chmod 600 /root/.ssh/id_ed25519 2>/dev/null || true
+    fi
+    /usr/sbin/sshd 2>/dev/null
+    success "sshd started"
+}
+
+startup_tools() {
+    # Activate NVM + node
+    [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
+    if [[ -f "$DATA/.node_version" ]]; then
+        nvm use "$(cat "$DATA/.node_version")" 2>/dev/null || nvm use --lts 2>/dev/null || true
+    else
+        nvm use --lts 2>/dev/null || true
+    fi
+    success "Tools: uv=$(uv --version 2>/dev/null | awk '{print $2}') | node=$(node --version 2>/dev/null) | pm2=$(pm2 --version 2>/dev/null)"
+}
+
+startup_pm2() {
+    mkdir -p "$DATA/.pm2"
+    if [[ ! -L /root/.pm2 ]]; then
+        rm -rf /root/.pm2
+        ln -sf "$DATA/.pm2" /root/.pm2
+    fi
+    pm2 resurrect 2>/dev/null && success "PM2 jobs resurrected" || warn "PM2: no saved state"
+}
+
+startup_tailscale() {
+    if ! command -v tailscale &>/dev/null; then
+        info "Installing tailscale..."
+        curl -fsSL https://tailscale.com/install.sh | sh -s -- -q
+    fi
+    pkill tailscaled 2>/dev/null || true; sleep 1
+    tailscaled --tun=userspace-networking --state="$DATA/tailscale-state.json" \
+        > "$DATA/tailscaled.log" 2>&1 &
+    sleep 3
+    if [[ -f "$DATA/.tailscale_authkey" ]]; then
+        tailscale up --authkey="$(cat "$DATA/.tailscale_authkey")" \
+            --accept-routes --hostname="$(hostname)" 2>/dev/null \
+            && success "Tailscale: $(tailscale ip -4)" \
+            || warn "Tailscale: auth failed — run 'tailscale up' manually"
+    else
+        warn "No auth key at $DATA/.tailscale_authkey — run 'tailscale up' manually"
+    fi
+}
+
+startup_bore() {
+    command -v bore &>/dev/null || return
+    pkill bore 2>/dev/null || true; sleep 1
+    nohup bash -c "while true; do bore local 22 --to bore.pub 2>&1 | tee $DATA/bore.log; sleep 3; done" &
+    sleep 3
+    echo "Bore: $(grep -o 'bore.pub:[0-9]*' "$DATA/bore.log" 2>/dev/null | tail -1 || echo 'not connected')"
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
 main() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  dotfile-A100 bootstrap"
+    echo "  dotfile-A100  —  $(date)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
+    # Install (idempotent — skip nếu đã có)
+    install_ssh
     install_uv
     install_huggingface
-    install_hf
     install_hf_xet
     install_nvitop
     install_pm2
     configure_shell
     setup_github_ssh
 
+    # Startup (luôn chạy)
+    startup_ssh
+    startup_tools
+    startup_pm2
+    startup_tailscale
+    startup_bore
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    success "Bootstrap complete!"
+    success "Done!  $(date)"
     echo ""
-    echo "  Next steps:"
-    echo "    hf auth login           # đăng nhập HF account"
-    echo "    ssh -T git@github.com   # kiểm tra GitHub SSH"
-    echo "    pm2 ls                  # xem trạng thái jobs"
+    echo "  Lần sau restart: bash /home/data/install.sh"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     if [[ "$_SOURCED" == false ]]; then
-        echo ""
-        echo -e "${YELLOW}  ⚠ Chạy lệnh sau để dùng ngay không cần mở terminal mới:${NC}"
-        echo "    source ~/.bashrc"
-        echo ""
+        echo -e "\n${YELLOW}  ⚠ Activate ngay:${NC}  source ~/.bashrc\n"
     fi
 }
 
