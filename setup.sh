@@ -95,7 +95,9 @@ install_pm2() {
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | \
             NVM_DIR="$NVM_DIR" bash
     fi
-    set +u; source "$NVM_DIR/nvm.sh"; nvm install --lts; nvm use --lts; set -u
+    # unset NPM_CONFIG_PREFIX: nvm incompatible with it
+    set +u; unset NPM_CONFIG_PREFIX; source "$NVM_DIR/nvm.sh"
+    nvm install --lts; nvm use --lts; set -u
     node --version > "$DATA/.node_version"
     npm install -g pm2
     ok "pm2 installed: $(pm2 --version)"
@@ -211,12 +213,15 @@ EOF
 }
 
 activate_tools() {
+    # set +u: nvm.sh accesses unset vars internally, would trigger set -u exit
+    set +u; unset NPM_CONFIG_PREFIX
     [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh" --no-use 2>/dev/null || true
     if [[ -f "$DATA/.node_version" ]]; then
         nvm use "$(cat "$DATA/.node_version")" 2>/dev/null || nvm use --lts 2>/dev/null || true
     else
         nvm use --lts 2>/dev/null || true
     fi
+    set -u
     ok "Tools: uv=$(uv --version 2>/dev/null | awk '{print $2}'), node=$(node --version 2>/dev/null), pm2=$(pm2 --version 2>/dev/null)"
 }
 
