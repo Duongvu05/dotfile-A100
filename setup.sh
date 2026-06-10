@@ -170,7 +170,7 @@ start_sshd() {
     if ! command -v sshd &>/dev/null; then
         info "sshd not found — installing (apt-get update + openssh-server)..."
         apt-get update -q 2>/dev/null
-        apt-get install -y openssh-server -q 2>/dev/null
+        apt-get install -y openssh-server libgl1 libglib2.0-0 -q 2>/dev/null
     fi
     mkdir -p /run/sshd
 
