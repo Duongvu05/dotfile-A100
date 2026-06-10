@@ -181,19 +181,31 @@ start_sshd() {
         chmod 600 /root/.ssh/authorized_keys
     fi
 
-    # Restore GitHub SSH key and config from persistent storage
-    if [[ -d "$DATA/.ssh" ]]; then
-        local key="$DATA/.ssh/id_ed25519_github"
-        if [[ -f "$key" ]]; then
-            cp "$key"      /root/.ssh/id_ed25519_github     2>/dev/null || true
-            cp "$key.pub"  /root/.ssh/id_ed25519_github.pub 2>/dev/null || true
-            chmod 600 /root/.ssh/id_ed25519_github 2>/dev/null || true
-        fi
-        if [[ -f "$DATA/.ssh/config" ]]; then
-            cp "$DATA/.ssh/config" /root/.ssh/config
-            chmod 600 /root/.ssh/config
-        fi
+    # Restore hoặc gen GitHub SSH key
+    mkdir -p "$DATA/.ssh" && chmod 700 "$DATA/.ssh"
+    local key="$DATA/.ssh/id_ed25519_github"
+    if [[ ! -f "$key" ]]; then
+        info "Generating GitHub SSH key (ed25519)..."
+        ssh-keygen -t ed25519 -C "github-a100-pod" -f "$key" -N "" -q
+        ok "SSH key created: $key"
     fi
+    cp "$key"      /root/.ssh/id_ed25519_github     2>/dev/null || true
+    cp "$key.pub"  /root/.ssh/id_ed25519_github.pub 2>/dev/null || true
+    chmod 600 /root/.ssh/id_ed25519_github 2>/dev/null || true
+
+    # SSH config cho GitHub
+    cat > "$DATA/.ssh/config" << 'EOF'
+Host github.com
+    IdentityFile ~/.ssh/id_ed25519_github
+    StrictHostKeyChecking no
+EOF
+    cp "$DATA/.ssh/config" /root/.ssh/config && chmod 600 /root/.ssh/config
+
+    echo ""
+    echo "  ┌─ GitHub public key (add tại github.com/settings/ssh/new) ──"
+    sed 's/^/  │  /' "$key.pub"
+    echo "  └────────────────────────────────────────────────────────────"
+    echo ""
 
     /usr/sbin/sshd 2>/dev/null && ok "sshd started" || warn "sshd failed to start"
 }
