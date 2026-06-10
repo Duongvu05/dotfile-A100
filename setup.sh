@@ -101,14 +101,6 @@ install_pm2() {
     ok "pm2 installed: $(pm2 --version)"
 }
 
-install_bore() {
-    if command -v bore &>/dev/null; then ok "bore already installed"; return; fi
-    info "Installing bore → /usr/local/bin ..."
-    curl -fsSL https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz \
-        | tar xz -C /usr/local/bin bore
-    chmod +x /usr/local/bin/bore
-    ok "bore installed"
-}
 
 setup_pm2_persist() {
     mkdir -p "$DATA/.pm2"
@@ -124,21 +116,22 @@ setup_pm2_persist() {
 
 setup_github_ssh() {
     local data_ssh="$DATA/.ssh"
-    local key="$data_ssh/id_ed25519"
+    local key="$data_ssh/id_ed25519_github"
     mkdir -p "$data_ssh" && chmod 700 "$data_ssh"
-    if [[ ! -L /root/.ssh ]]; then
-        cp -r /root/.ssh/. "$data_ssh/" 2>/dev/null || true
-        rm -rf /root/.ssh
-        ln -sf "$data_ssh" /root/.ssh
-        ok "~/.ssh symlinked → $data_ssh"
-    fi
     if [[ ! -f "$key" ]]; then
-        info "Generating SSH key (ed25519)..."
-        ssh-keygen -t ed25519 -C "github-$(hostname)" -f "$key" -N ""
+        info "Generating GitHub SSH key (ed25519)..."
+        ssh-keygen -t ed25519 -C "github-a100-pod" -f "$key" -N "" -q
         ok "SSH key created: $key"
     else
         ok "SSH key exists: $key"
     fi
+    # Write SSH config so git always uses this key for GitHub
+    cat > "$data_ssh/config" << 'EOF'
+Host github.com
+    IdentityFile ~/.ssh/id_ed25519_github
+    StrictHostKeyChecking no
+EOF
+    chmod 600 "$data_ssh/config"
     [[ -f "$data_ssh/authorized_keys" ]] && \
         cp "$data_ssh/authorized_keys" "$DATA/.ssh_authorized_keys" || true
     echo ""
@@ -188,11 +181,18 @@ start_sshd() {
         chmod 600 /root/.ssh/authorized_keys
     fi
 
-    # Restore git SSH key
+    # Restore GitHub SSH key and config from persistent storage
     if [[ -d "$DATA/.ssh" ]]; then
-        cp "$DATA/.ssh/id_ed25519"     /root/.ssh/id_ed25519     2>/dev/null || true
-        cp "$DATA/.ssh/id_ed25519.pub" /root/.ssh/id_ed25519.pub 2>/dev/null || true
-        chmod 600 /root/.ssh/id_ed25519 2>/dev/null || true
+        local key="$DATA/.ssh/id_ed25519_github"
+        if [[ -f "$key" ]]; then
+            cp "$key"      /root/.ssh/id_ed25519_github     2>/dev/null || true
+            cp "$key.pub"  /root/.ssh/id_ed25519_github.pub 2>/dev/null || true
+            chmod 600 /root/.ssh/id_ed25519_github 2>/dev/null || true
+        fi
+        if [[ -f "$DATA/.ssh/config" ]]; then
+            cp "$DATA/.ssh/config" /root/.ssh/config
+            chmod 600 /root/.ssh/config
+        fi
     fi
 
     /usr/sbin/sshd 2>/dev/null && ok "sshd started" || warn "sshd failed to start"
@@ -226,28 +226,20 @@ start_tailscale() {
     tailscaled --tun=userspace-networking --state="$DATA/tailscale-state.json" \
         > "$DATA/tailscaled.log" 2>&1 &
     sleep 3
-    if [[ -f "$DATA/.tailscale_authkey" ]]; then
-        tailscale up --authkey="$(cat "$DATA/.tailscale_authkey")" \
-            --accept-routes --hostname="$(hostname)" 2>/dev/null \
-            && ok "Tailscale: $(tailscale ip -4)" \
-            || warn "Tailscale auth failed — run 'tailscale up' manually"
-    else
+    if [[ ! -f "$DATA/.tailscale_authkey" ]]; then
         warn "No Tailscale auth key at $DATA/.tailscale_authkey"
+        return 1
+    fi
+    if tailscale up --authkey="$(cat "$DATA/.tailscale_authkey")" \
+            --accept-routes --hostname="$(hostname)" 2>/dev/null; then
+        ok "Tailscale: $(tailscale ip -4)"
+        return 0
+    else
+        warn "Tailscale auth failed — run 'tailscale up' manually"
+        return 1
     fi
 }
 
-start_bore() {
-    if ! command -v bore &>/dev/null; then
-        warn "bore not installed — run: bash setup.sh install"; return
-    fi
-    pkill bore 2>/dev/null || true; sleep 1
-    nohup bash -c "while true; do bore local 22 --to bore.pub 2>&1 | tee $DATA/bore.log; sleep 3; done" \
-        > /dev/null 2>&1 &
-    sleep 3
-    local port
-    port=$(grep -o 'bore.pub:[0-9]*' "$DATA/bore.log" 2>/dev/null | tail -1 || echo "none")
-    ok "Bore tunnel: $port"
-}
 
 # ══════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -261,7 +253,6 @@ if [[ "$MODE" == "install" ]]; then
     install_hf_xet
     install_nvitop
     install_pm2
-    install_bore
     setup_pm2_persist
     configure_shell
     setup_github_ssh
@@ -288,8 +279,8 @@ else
     start_sshd
     activate_tools
     start_pm2
+
     start_tailscale
-    start_bore
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
