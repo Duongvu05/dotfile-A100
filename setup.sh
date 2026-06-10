@@ -221,12 +221,22 @@ activate_tools() {
 }
 
 start_pm2() {
+    if ! command -v pm2 &>/dev/null; then
+        warn "pm2 not installed — run: bash setup.sh install"; return
+    fi
     mkdir -p "$DATA/.pm2"
+    # Symlink /root/.pm2 → persistent storage (pod restart resets /root)
     if [[ ! -L /root/.pm2 ]]; then
         rm -rf /root/.pm2
         ln -sf "$DATA/.pm2" /root/.pm2
+        ok "PM2 data → $DATA/.pm2 (persistent)"
     fi
-    pm2 resurrect 2>/dev/null && ok "PM2 jobs resurrected" || warn "PM2: no saved state"
+    if pm2 resurrect 2>/dev/null; then
+        ok "PM2 jobs resurrected"
+        pm2 list --no-color 2>/dev/null | grep -v "^$" || true
+    else
+        warn "PM2: no saved state — start jobs then run 'pm2 save'"
+    fi
 }
 
 start_tailscale() {
