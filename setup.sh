@@ -258,13 +258,36 @@ start_tailscale() {
         return 1
     fi
     if tailscale up --authkey="$(cat "$DATA/.tailscale_authkey")" \
-            --accept-routes --hostname="$(hostname)" 2>/dev/null; then
+            --accept-routes --ssh --hostname="$(hostname)" 2>/dev/null; then
         ok "Tailscale: $(tailscale ip -4)"
         return 0
     else
         warn "Tailscale auth failed — run 'tailscale up' manually"
         return 1
     fi
+}
+
+start_reverse_tunnel() {
+    # Inbound TCP tới Tailscale IP của pod bị timeout (tailscaled chạy
+    # userspace-networking, chỉ có DERP relay) — máy ngoài SSH vào pod
+    # qua reverse tunnel này: trên worker chạy `ssh -p 2222 root@localhost`.
+    local worker="vungocduong@100.89.187.1"   # bailab-worker-61
+    local port=2222
+    if pgrep -f "ssh.*-R ${port}:localhost:22" >/dev/null 2>&1; then
+        ok "Reverse tunnel already running (port $port)"; return
+    fi
+    # ProxyCommand bắt buộc: userspace-networking nên outbound tới tailnet
+    # phải đi qua `tailscale nc`. Auth bằng Tailscale SSH (tailnet identity,
+    # không cần key). Vòng while tự reconnect khi tunnel đứt.
+    nohup bash -c "while true; do
+        ssh -o ProxyCommand='tailscale nc %h %p' \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -o ExitOnForwardFailure=yes \
+            -R ${port}:localhost:22 ${worker} -N
+        sleep 5
+    done" > "$DATA/tunnel.log" 2>&1 &
+    ok "Reverse tunnel → ${worker} (trên worker: ssh -p ${port} root@localhost)"
 }
 
 
@@ -307,7 +330,7 @@ else
     activate_tools
     start_pm2
 
-    start_tailscale
+    start_tailscale && start_reverse_tunnel
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

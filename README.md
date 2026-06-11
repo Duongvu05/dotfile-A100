@@ -66,6 +66,7 @@ Startup khôi phục theo thứ tự:
 2. **Tools** — activate uv, nvm, node, pm2
 3. **PM2** — resurrect các job đã lưu
 4. **Tailscale** — kết nối VPN, lấy IP cố định
+5. **Reverse tunnel** — mở port 2222 trên worker để SSH vào pod
 
 Output mẫu:
 ```
@@ -73,6 +74,7 @@ Output mẫu:
 [OK]    Tools: uv=0.5.x, node=v20.x, pm2=5.x
 [OK]    PM2 jobs resurrected
 [OK]    Tailscale: 100.x.x.x
+[OK]    Reverse tunnel → vungocduong@100.89.187.1 (trên worker: ssh -p 2222 root@localhost)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [OK]    STARTUP DONE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -82,17 +84,30 @@ Output mẫu:
 
 ## SSH vào pod
 
+SSH thẳng vào Tailscale IP của pod **không hoạt động** — tailscaled trên pod chạy userspace-networking (container không có `/dev/net/tun`), inbound TCP chỉ đi được qua DERP relay và bị timeout. Startup script tự mở **reverse tunnel** sang worker thay thế:
+
 ```
-# ~/.ssh/config trên máy local
-Host runai-pod
-  HostName 100.x.x.x        # Tailscale IP của pod (xem output startup)
-  User root
-  IdentityFile ~/.ssh/id_ed25519
+Pod ──(reverse tunnel, port 2222)──► bailab-worker-61 (100.89.187.1)
 ```
 
+Từ worker (hoặc máy đã SSH vào worker):
+
 ```bash
-ssh runai-pod
+ssh -p 2222 root@localhost
 ```
+
+Hoặc trong `~/.ssh/config` trên worker:
+
+```
+Host runai-pod
+  HostName localhost
+  Port 2222
+  User root
+```
+
+Tunnel auth bằng Tailscale SSH (tailnet identity) nên không cần thêm key. Nếu tunnel đứt, vòng lặp trong `start_reverse_tunnel` tự reconnect sau 5s; log tại `/home/data/tunnel.log`.
+
+> Public key của máy cần vào pod vẫn phải có trong `/home/data/.ssh_authorized_keys` (sshd trên pod xác thực bằng key như bình thường).
 
 ---
 
@@ -142,6 +157,7 @@ Traffic thông thường        ──► thẳng internet (không qua VP)  ✓
 | `.ssh_authorized_keys` | SSH public keys được phép vào pod | ✓ |
 | `.ssh/id_ed25519_github` | GitHub SSH key của pod | — |
 | `tailscale-state.json` | Tailscale state (giữ IP cố định qua restart) | — |
+| `tunnel.log` | Log của reverse SSH tunnel sang worker | — |
 | `.pm2/` | PM2 job list và state | — |
 | `.local/bin/` | uv + tools binaries | — |
 | `.nvm/` | Node Version Manager | — |
