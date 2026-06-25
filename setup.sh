@@ -212,6 +212,21 @@ EOF
     /usr/sbin/sshd 2>/dev/null && ok "sshd started" || warn "sshd failed to start"
 }
 
+
+install_R_startup() {
+    # Install R binary via apt (ephemeral, fast ~30s) + use persistent packages
+    if ! command -v Rscript &>/dev/null; then
+        info "Installing R (apt)..."
+        apt-get install -y -q r-base 2>/dev/null
+    fi
+    # Point R to persistent package library
+    export R_LIBS_USER="$DATA/R/library"
+    mkdir -p "$R_LIBS_USER"
+    # Add R_LIBS_USER to shell env permanently this session
+    echo "export R_LIBS_USER=$DATA/R/library" >> /etc/environment 2>/dev/null || true
+    ok "R ready: $(Rscript --version 2>&1 | head -1)  packages -> $R_LIBS_USER"
+}
+
 activate_tools() {
     # set +u: nvm.sh accesses unset vars internally, would trigger set -u exit
     set +u; unset NPM_CONFIG_PREFIX
