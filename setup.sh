@@ -181,6 +181,13 @@ start_sshd() {
     if [[ -f "$DATA/.ssh_authorized_keys" ]]; then
         cp "$DATA/.ssh_authorized_keys" /root/.ssh/authorized_keys
         chmod 600 /root/.ssh/authorized_keys
+
+    # Restore tunnel key (dùng cho reverse tunnel → worker)
+    if [[ -f "$DATA/.ssh/id_ed25519" ]]; then
+        cp "$DATA/.ssh/id_ed25519"     /root/.ssh/id_ed25519     2>/dev/null || true
+        cp "$DATA/.ssh/id_ed25519.pub" /root/.ssh/id_ed25519.pub 2>/dev/null || true
+        chmod 600 /root/.ssh/id_ed25519 2>/dev/null || true
+    fi
     fi
 
     # Restore hoặc gen GitHub SSH key
@@ -292,10 +299,10 @@ start_reverse_tunnel() {
         ok "Reverse tunnel already running (port $port)"; return
     fi
     # ProxyCommand bắt buộc: userspace-networking nên outbound tới tailnet
-    # phải đi qua `tailscale nc`. Auth bằng Tailscale SSH (tailnet identity,
-    # không cần key). Vòng while tự reconnect khi tunnel đứt.
+    # phải đi qua `tailscale nc`. Auth bằng SSH key (/home/data/.ssh/id_ed25519,
+    # persistent qua restart). Vòng while tự reconnect khi tunnel đứt.
     nohup bash -c "while true; do
-        ssh -o ProxyCommand='tailscale nc %h %p' \
+        ssh -i /home/data/.ssh/id_ed25519 -o ProxyCommand='tailscale nc %h %p' \
             -o StrictHostKeyChecking=no \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -o ExitOnForwardFailure=yes \
