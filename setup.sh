@@ -271,16 +271,30 @@ start_tailscale() {
         info "Installing tailscale..."
         curl -fsSL https://tailscale.com/install.sh | sh -s -- -q
     fi
-    pkill tailscaled 2>/dev/null || true; sleep 1
-    tailscaled --tun=userspace-networking --state="$DATA/tailscale-state.json" \
-        > "$DATA/tailscaled.log" 2>&1 &
+    # Multiple workloads can share this same host path (same /home/data),
+    # so the tailscale state file -- which holds the node's private identity,
+    # not just a display name -- MUST be unique per workload. Two containers
+    # sharing one state file would both authenticate as the same tailnet
+    # node and fight each other. Key it off TUNNEL_PORT (already required to
+    # be set uniquely per workload) rather than hostname, since hostname
+    # alone doesn't change the underlying node identity in the state file.
+    local wid="${TUNNEL_PORT:-default}"
+    local state_file="$DATA/tailscale-state-${wid}.json"
+    # /var/run (where tailscaled's default control socket lives) is
+    # per-container, NOT part of the shared host path, so multiple
+    # tailscaled instances across workloads don't need separate sockets --
+    # only files under $DATA (the actual shared storage) need per-workload
+    # names.
+    pkill -f "tailscaled.*${state_file}" 2>/dev/null || true; sleep 1
+    tailscaled --tun=userspace-networking --state="$state_file" \
+        > "$DATA/tailscaled-${wid}.log" 2>&1 &
     sleep 3
     if [[ ! -f "$DATA/.tailscale_authkey" ]]; then
         warn "No Tailscale auth key at $DATA/.tailscale_authkey"
         return 1
     fi
     if tailscale up --authkey="$(cat "$DATA/.tailscale_authkey")" \
-            --accept-routes --ssh --hostname="$(hostname)" 2>/dev/null; then
+            --accept-routes --ssh --hostname="$(hostname)-${wid}" 2>/dev/null; then
         ok "Tailscale: $(tailscale ip -4)"
         return 0
     else
@@ -299,12 +313,16 @@ start_reverse_tunnel() {
     # of that same workload -- no more editing this file by hand). Defaults
     # to 2222 for backwards compatibility with the original pod.
     local port="${TUNNEL_PORT:-2222}"
+    local wid="${TUNNEL_PORT:-default}"
     if pgrep -f "ssh.*-R ${port}:localhost:22" >/dev/null 2>&1; then
         ok "Reverse tunnel already running (port $port)"; return
     fi
     # ProxyCommand bắt buộc: userspace-networking nên outbound tới tailnet
-    # phải đi qua `tailscale nc`. Auth bằng SSH key (/home/data/.ssh/id_ed25519,
-    # persistent qua restart). Vòng while tự reconnect khi tunnel đứt.
+    # phải đi qua `tailscale nc` (socket mặc định trong /var/run, riêng theo
+    # container nên không cần chỉ định socket khác nhau giữa các workload).
+    # Auth bằng SSH key (/home/data/.ssh/id_ed25519, persistent qua restart,
+    # dùng chung được vì worker chỉ cần trust đúng public key).
+    # Vòng while tự reconnect khi tunnel đứt.
     nohup bash -c "while true; do
         ssh -i /home/data/.ssh/id_ed25519 -o ProxyCommand='tailscale nc %h %p' \
             -o StrictHostKeyChecking=no \
@@ -312,7 +330,7 @@ start_reverse_tunnel() {
             -o ExitOnForwardFailure=yes \
             -R ${port}:localhost:22 ${worker} -N
         sleep 5
-    done" > "$DATA/tunnel.log" 2>&1 &
+    done" > "$DATA/tunnel-${wid}.log" 2>&1 &
     ok "Reverse tunnel → ${worker} (trên worker: ssh -p ${port} root@localhost)"
 }
 
