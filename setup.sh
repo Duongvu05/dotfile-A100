@@ -294,7 +294,11 @@ start_reverse_tunnel() {
     # userspace-networking, chỉ có DERP relay) — máy ngoài SSH vào pod
     # qua reverse tunnel này: trên worker chạy `ssh -p 2222 root@localhost`.
     local worker="vungocduong@100.89.187.1"   # bailab-worker-61
-    local port=2222
+    # Override per-workload via the TUNNEL_PORT env var (set it once in the
+    # RunAI workload's environment variables so it persists across restarts
+    # of that same workload -- no more editing this file by hand). Defaults
+    # to 2222 for backwards compatibility with the original pod.
+    local port="${TUNNEL_PORT:-2222}"
     if pgrep -f "ssh.*-R ${port}:localhost:22" >/dev/null 2>&1; then
         ok "Reverse tunnel already running (port $port)"; return
     fi
